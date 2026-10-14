@@ -2,23 +2,23 @@
 
 ## Problem Statement
 
-Users need a Rust implementation of `ls` that behaves predictably on Linux and macOS. It should cover the directory listing workflows people commonly use from a shell, including hidden entries, detailed metadata, alternate sorting, and recursive traversal. The current project contains no implementation, so the supported behavior and completion criteria need to be defined before development.
+Users need a Rust implementation of `ls` that behaves predictably on macOS. It should cover the directory listing workflows people commonly use from a shell, including hidden entries, detailed metadata, alternate sorting, and recursive traversal. The current project contains no implementation, so the supported behavior and completion criteria need to be defined before development.
 
 ## Solution
 
-Build a command-line program in Rust that lists files and directories using familiar `ls` conventions. Support the options and behaviors defined in this specification, while documenting platform-dependent metadata. The first version supports `-a`, `-A`, `-l`, `-h`, `-R`, `-r`, `-t`, `-S`, and `-1`. It supports both direct command-line use and a reusable listing interface whose behavior can be tested independently.
+Build a command-line program in Rust that lists files and directories using familiar macOS `ls` conventions. Support the options and behaviors defined in this specification. The first version supports `-a`, `-A`, `-l`, `-h`, `-R`, `-r`, `-t`, `-S`, and `-1`. It supports both direct command-line use and a reusable listing interface whose behavior can be tested independently.
 
 ## User Stories
 
-1. As a shell user, I want to list the current directory when I run the program without paths, so that I can quickly see its contents.
-2. As a shell user, I want to list one or more explicitly named files, so that I can inspect paths without listing their parent directories.
-3. As a shell user, I want to list one or more directories, so that I can inspect their contents.
-4. As a shell user, I want directory entries sorted by name by default, so that listings are predictable.
-5. As a shell user, I want names beginning with `.` hidden by default, so that the default output stays focused on ordinary entries.
-6. As a shell user, I want `-a` to include all entries, including `.` and `..`, so that I can inspect the complete directory entry set.
-7. As a shell user, I want `-A` to include hidden entries while excluding `.` and `..`, so that I can see hidden files without navigation entries.
-8. As a shell user, I want `-1` to print one entry per line, so that output is easy to read and process in a terminal or script.
-9. As a shell user, I want `-l` to show a long listing with file type and permissions, link count, owner, group, size, modification time, and name, so that I can inspect file metadata.
+1.  As a shell user, I want to list the current directory when I run the program without paths, so that I can quickly see its contents.
+2.  As a shell user, I want to list one or more explicitly named files, so that I can inspect paths without listing their parent directories.
+3.  As a shell user, I want to list one or more directories, so that I can inspect their contents.
+4.  As a shell user, I want directory entries sorted by name by default, so that listings are predictable.
+5.  As a shell user, I want names beginning with `.` hidden by default, so that the default output stays focused on ordinary entries.
+6.  As a shell user, I want `-a` to include all entries, including `.` and `..`, so that I can inspect the complete directory entry set.
+7.  As a shell user, I want `-A` to include hidden entries while excluding `.` and `..`, so that I can see hidden files without navigation entries.
+8.  As a shell user, I want `-1` to print one entry per line, so that output is easy to read and process in a terminal or script.
+9.  As a shell user, I want `-l` to show a long listing with file type and permissions, link count, owner, group, size, modification time, and name, so that I can inspect file metadata.
 10. As a shell user, I want `-h` with `-l` to display file sizes in readable units, so that large sizes are easier to compare.
 11. As a shell user, I want `-t` to sort by modification time, newest first, so that recently changed entries appear first.
 12. As a shell user, I want `-S` to sort by file size, largest first, so that I can find large files quickly.
@@ -34,7 +34,7 @@ Build a command-line program in Rust that lists files and directories using fami
 
 ## Implementation Decisions
 
-- Support Linux and macOS. Use standard filesystem metadata available on each platform; document differences where owner, group, permissions, or timestamps cannot be represented identically.
+- Support macOS only. Use macOS filesystem metadata and follow macOS conventions for owner, group, permissions, and timestamps in long-format output.
 - With no path arguments, list the current directory. Explicit file arguments are displayed as entries; explicit directory arguments list their immediate contents unless `-d` is later added (directory-as-entry behavior is out of scope for this version). An explicitly supplied symlink to a directory is followed for enumeration. File operands are sorted together as one group using the selected sort order; directory operands are processed in their original argument order, and each directory's contents form a separate listing.
 - By default, omit dot-prefixed entries and sort names in ascending, case-sensitive lexical order. `-a` includes `.` and `..`; because directory enumeration does not return these entries, synthesize them for each directory listing and obtain their metadata from the listed directory and its parent. `-A` includes other hidden entries but omits `.` and `..`.
 - `-1` selects one entry per line. Long format `-l` prints one entry per line and includes type/permissions, link count, owner, group, size, modification time, and name. `-h` changes the size display in long format to readable units; without `-l`, it has no visible effect.
@@ -48,10 +48,10 @@ Build a command-line program in Rust that lists files and directories using fami
 
 ## Testing Decisions
 
-- Test externally visible behavior rather than private implementation details. Use temporary directory trees with controlled filenames, metadata where practical, and permissions where the platform permits reliable permission tests.
+- Test externally visible behavior rather than private implementation details. Use temporary directory trees with controlled filenames, metadata, and permissions on macOS.
 - Test the reusable listing interface for default filtering and sorting, synthesized `.` and `..` under `-a`, `-A` filtering, time and size order, ties and reversal, long-format fields, readable sizes, symlink sizes, and recursive traversal without following directory symlinks.
 - Test the executable end to end for default invocation, file and directory operands, explicit symlink-to-directory operands, combined short options, `--` with dash-prefixed names, one-entry-per-line output, long format, errors on standard error, continuation across valid and invalid operands, and exit statuses.
-- Cover filenames with spaces, non-ASCII characters, control characters, and invalid UTF-8 bytes where the platform permits creating them; verify the specified escaping. Avoid asserting platform-specific owner names, permission encodings, or timestamp text beyond the documented contract.
+- Cover filenames with spaces, non-ASCII characters, control characters, and invalid UTF-8 bytes; verify the specified escaping. Assert owner and group fields, permission encodings, and timestamp text according to the documented macOS contract.
 - Test file-operand grouping and order, directory-operand order, and stable name tie-breaking for each selected sort key. Verify that displayed symlinks use link metadata and are not traversed when discovered during recursion.
 - Compare semantic output and ordering in tests; avoid brittle assertions on terminal width or color because neither is part of this version.
 - No existing test infrastructure or similar tests are present in the repository. Establish the smallest suitable unit and process-level test setup as part of implementation.
@@ -63,7 +63,6 @@ Build a command-line program in Rust that lists files and directories using fami
 - Directory-as-entry mode (`-d`), color indicators, inode/block counts, and configurable time formats.
 - Sorting by extension, version, locale collation, or access/change time.
 - Following symbolic links discovered during recursive traversal.
-- Windows support.
 
 ## Further Notes
 
@@ -86,7 +85,7 @@ Accept the specified combined short options, `--`, and `-1`, with clear diagnost
 
 ### T4: Implement long format and readable sizes
 
-Render the specified metadata for `-l` and readable sizes for `-h` when used with long format, accounting for documented platform differences.
+Render the specified metadata for `-l` and readable sizes for `-h` when used with long format, following the documented macOS format.
 
 ### T5: Implement sorting options
 
