@@ -6,7 +6,7 @@ Users need a Rust implementation of `ls` that behaves predictably on Linux and m
 
 ## Solution
 
-Build a command-line program in Rust that lists files and directories using familiar `ls` conventions. Match the common behavior of GNU `ls` for the supported options while documenting platform-dependent metadata. The first version supports `-a`, `-A`, `-l`, `-h`, `-R`, `-r`, `-t`, `-S`, and `-1`. It supports both direct command-line use and a reusable listing interface whose behavior can be tested independently.
+Build a command-line program in Rust that lists files and directories using familiar `ls` conventions. Support the options and behaviors defined in this specification, while documenting platform-dependent metadata. The first version supports `-a`, `-A`, `-l`, `-h`, `-R`, `-r`, `-t`, `-S`, and `-1`. It supports both direct command-line use and a reusable listing interface whose behavior can be tested independently.
 
 ## User Stories
 
@@ -35,32 +35,34 @@ Build a command-line program in Rust that lists files and directories using fami
 ## Implementation Decisions
 
 - Support Linux and macOS. Use standard filesystem metadata available on each platform; document differences where owner, group, permissions, or timestamps cannot be represented identically.
-- With no path arguments, list the current directory. Explicit file arguments are displayed as entries; explicit directory arguments list their immediate contents unless `-d` is later added (directory-as-entry behavior is out of scope for this version).
-- By default, omit dot-prefixed entries and sort names in ascending, case-sensitive lexical order. `-a` includes `.` and `..`; `-A` includes other hidden entries but omits `.` and `..`.
+- With no path arguments, list the current directory. Explicit file arguments are displayed as entries; explicit directory arguments list their immediate contents unless `-d` is later added (directory-as-entry behavior is out of scope for this version). An explicitly supplied symlink to a directory is followed for enumeration. File operands are sorted together as one group using the selected sort order; directory operands are processed in their original argument order, and each directory's contents form a separate listing.
+- By default, omit dot-prefixed entries and sort names in ascending, case-sensitive lexical order. `-a` includes `.` and `..`; because directory enumeration does not return these entries, synthesize them for each directory listing and obtain their metadata from the listed directory and its parent. `-A` includes other hidden entries but omits `.` and `..`.
 - `-1` selects one entry per line. Long format `-l` prints one entry per line and includes type/permissions, link count, owner, group, size, modification time, and name. `-h` changes the size display in long format to readable units; without `-l`, it has no visible effect.
-- `-t` orders entries by modification time, newest first. `-S` orders entries by size, largest first. When neither is supplied, order by name. If both `-t` and `-S` are supplied, `-S` takes precedence. `-r` reverses whichever ordering is selected. Entries tied by the selected sort key use ascending name order before reversal.
-- `-R` descends into subdirectories and prints a directory heading before each directory's entries. Do not follow symbolic links to directories during recursion, preventing cycles and matching common `ls` behavior. Report traversal errors and continue with other reachable entries.
-- Combined short options (such as `-al`) are accepted. An unsupported option produces a diagnostic and a nonzero exit status.
+- `-t` orders entries by modification time, newest first. `-S` orders entries by size, largest first. When neither is supplied, order by name. If both `-t` and `-S` are supplied, `-S` takes precedence regardless of option order. Entries tied by the selected sort key use ascending name order before reversal. `-r` reverses the complete selected ordering, including its name-based tie order.
+- Use non-following metadata for entries discovered while listing a directory, including symlink entries. A displayed symlink's size is the size of its link text; `-S` sorts by the same size shown by `-l`. When an explicitly supplied symlink to a directory is followed for enumeration, list the target directory's entries. During `-R`, display symlinks to directories but do not descend through them.
+- `-R` descends into subdirectories and prints a directory heading before each directory's entries. Report traversal errors and continue with other reachable entries.
+- Combined short options (such as `-al`) are accepted. `--` ends option parsing; all following arguments are operands, including names beginning with `-`. An unsupported option produces a diagnostic and a nonzero exit status.
 - Each invalid or inaccessible input path produces a diagnostic on standard error. Continue processing other operands; return nonzero if any operand or recursive traversal failed, and zero if all requested work succeeded.
-- Preserve filenames as text using the platform's lossless or best-available display representation. Exact escaping rules for control characters are not required in this version.
-- Keep a reusable listing behavior interface for core enumeration, filtering, sorting, and metadata selection, plus a CLI layer that parses arguments and renders output. Specific module names and dependencies are implementation choices.
+- Preserve filename bytes internally. In output, leave valid Unicode and spaces unchanged, encode each backslash as `\\`, and encode control characters and bytes that are not valid UTF-8 as `\xNN` using two hexadecimal digits. This makes escaped bytes distinguishable from literal backslashes.
+- Keep a reusable listing behavior interface for core enumeration, filtering, sorting, and metadata selection. It accepts parsed options and operands and returns entries plus per-path or per-entry errors; it does not render diagnostics or determine the process exit status. The CLI parses arguments, renders entries and diagnostics, continues after individual errors where possible, and returns a nonzero status if any operation failed. Specific module names and dependencies are implementation choices.
 
 ## Testing Decisions
 
 - Test externally visible behavior rather than private implementation details. Use temporary directory trees with controlled filenames, metadata where practical, and permissions where the platform permits reliable permission tests.
-- Test the reusable listing interface for default filtering and sorting, `-a` and `-A`, time and size order, reversal, long-format fields, readable sizes, and recursive traversal without following directory symlinks.
-- Test the executable end to end for default invocation, file and directory operands, combined short options, one-entry-per-line output, long format, errors on standard error, continuation across multiple operands, and exit statuses.
-- Cover filenames with spaces and non-ASCII characters. Avoid asserting platform-specific owner names, permission encodings, or timestamp text beyond the documented contract.
+- Test the reusable listing interface for default filtering and sorting, synthesized `.` and `..` under `-a`, `-A` filtering, time and size order, ties and reversal, long-format fields, readable sizes, symlink sizes, and recursive traversal without following directory symlinks.
+- Test the executable end to end for default invocation, file and directory operands, explicit symlink-to-directory operands, combined short options, `--` with dash-prefixed names, one-entry-per-line output, long format, errors on standard error, continuation across valid and invalid operands, and exit statuses.
+- Cover filenames with spaces, non-ASCII characters, control characters, and invalid UTF-8 bytes where the platform permits creating them; verify the specified escaping. Avoid asserting platform-specific owner names, permission encodings, or timestamp text beyond the documented contract.
+- Test file-operand grouping and order, directory-operand order, and stable name tie-breaking for each selected sort key. Verify that displayed symlinks use link metadata and are not traversed when discovered during recursion.
 - Compare semantic output and ordering in tests; avoid brittle assertions on terminal width or color because neither is part of this version.
 - No existing test infrastructure or similar tests are present in the repository. Establish the smallest suitable unit and process-level test setup as part of implementation.
 
 ## Out of Scope
 
-- Full GNU `ls` compatibility or all GNU/BSD options.
+- Full GNU `ls` compatibility or all GNU/BSD options; compatibility is limited to the options and behaviors defined above.
 - Colorized output, terminal-width-aware columns, and terminal capability detection.
-- Directory-as-entry mode (`-d`), color indicators, inode/block counts, quoting or escaping policies, and configurable time formats.
+- Directory-as-entry mode (`-d`), color indicators, inode/block counts, and configurable time formats.
 - Sorting by extension, version, locale collation, or access/change time.
-- Following symbolic links during recursive traversal.
+- Following symbolic links discovered during recursive traversal.
 - Windows support.
 
 ## Further Notes
@@ -72,7 +74,7 @@ Build a command-line program in Rust that lists files and directories using fami
 
 ### T1: Establish the Rust command and reusable listing interface
 
-Create the executable and a testable listing boundary. Define how operands, options, entries, metadata failures, and rendered diagnostics flow between the CLI and listing behavior.
+Create the executable and a testable listing boundary. The listing interface accepts parsed options and operands and returns entries plus per-path or per-entry errors; the CLI renders diagnostics and determines the final status.
 
 ### T2: Implement operand handling, filtering, and default ordering
 
@@ -80,7 +82,7 @@ List the current directory by default, support file and directory operands, omit
 
 ### T3: Implement option parsing and line-oriented output
 
-Accept the specified combined short options and implement `-1`, with clear diagnostics and failure status for unsupported options.
+Accept the specified combined short options, `--`, and `-1`, with clear diagnostics and failure status for unsupported options.
 
 ### T4: Implement long format and readable sizes
 
@@ -88,12 +90,12 @@ Render the specified metadata for `-l` and readable sizes for `-h` when used wit
 
 ### T5: Implement sorting options
 
-Add modification-time sorting with `-t`, size sorting with `-S`, the specified precedence when both are set, and reversal with `-r`.
+Add modification-time sorting with `-t`, size sorting with `-S`, `-S` precedence when both are set, name tie-breaking, and reversal with `-r`.
 
 ### T6: Implement recursive traversal and error continuation
 
-Add `-R`, directory headings, no-follow behavior for symlinked directories, and continued processing after individual path or traversal errors.
+Add `-R`, directory headings, no-follow behavior for discovered symlinked directories, and continued processing after individual path or traversal errors. Follow explicitly supplied symlinks to directories for enumeration.
 
 ### T7: Verify the acceptance contract
 
-Add reusable-interface and executable-level tests for the behaviors and failure cases defined above, then confirm the command builds and the test suite passes.
+Add reusable-interface and executable-level tests for the behaviors and failure cases defined above, including operand grouping, symlink metadata and traversal, filename escaping, `--`, and continuation after mixed valid and invalid operands; then confirm the command builds and the test suite passes.
