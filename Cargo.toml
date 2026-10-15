@@ -1,0 +1,10 @@
+[package]
+name = "rust-ls"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A macOS-oriented Rust implementation of ls"
+license = "MIT"
+
+[dependencies]
+thiserror = "2"
