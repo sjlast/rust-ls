@@ -19,20 +19,20 @@ cargo run -- [OPTIONS] [PATH...]
 With no paths, the intended behavior is to list the current directory. Once implemented,
 the planned options are:
 
-| Option | Intended behavior |
-| --- | --- |
-| `-a` | Include `.` and `..` as well as hidden entries |
-| `-A` | Include hidden entries, excluding `.` and `..` |
-| `-l` | Show file type, permissions, links, owner, group, size, time, and name |
-| `-h` | Use readable sizes with `-l` |
-| `-1` | Print one entry per line |
-| `-t` | Sort by modification time, newest first |
-| `-S` | Sort by size, largest first |
-| `-r` | Reverse the selected ordering |
-| `-R` | Recursively list subdirectories |
+| Option | Intended behavior                                                      |
+| ------ | ---------------------------------------------------------------------- |
+| `-a`   | Include `.` and `..` as well as hidden entries                         |
+| `-A`   | Include hidden entries, excluding `.` and `..`                         |
+| `-l`   | Show file type, permissions, links, owner, group, size, time, and name |
+| `-h`   | Use readable sizes with `-l`                                           |
+| `-1`   | Print one entry per line                                               |
+| `-t`   | Sort by modification time, newest first                                |
+| `-S`   | Sort by size, largest first                                            |
+| `-r`   | Reverse the selected ordering                                          |
+| `-R`   | Recursively list subdirectories                                        |
 
 Combined short options and `--` to end option parsing are also planned. See
-[`specs/implement-ls-in-rust.md`](specs/implement-ls-in-rust.md) for the detailed behavior
+[`specs/PLAN.md`](specs/PLAN.md) for the detailed behavior
 and acceptance criteria.
 
 ## Library interface
