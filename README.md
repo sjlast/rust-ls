@@ -3,9 +3,9 @@
 A macOS-oriented Rust implementation of `ls`. The project is being built as a learning
 project and aims to support common macOS directory-listing workflows.
 
-> **Status:** Early development. The command and reusable listing interface exist, but
-> directory enumeration and option handling are not implemented yet. Running the current
-> binary does not produce a listing.
+> **Status:** Early development. The command supports basic directory enumeration and short
+> option parsing; metadata formatting, alternate sorting, and recursive traversal are still
+> being implemented.
 
 ## Build and run
 
@@ -16,8 +16,7 @@ cargo build
 cargo run -- [OPTIONS] [PATH...]
 ```
 
-With no paths, the intended behavior is to list the current directory. Once implemented,
-the planned options are:
+With no paths, the command lists the current directory. Supported options are:
 
 | Option | Intended behavior                                                      |
 | ------ | ---------------------------------------------------------------------- |
@@ -25,13 +24,14 @@ the planned options are:
 | `-A`   | Include hidden entries, excluding `.` and `..`                         |
 | `-l`   | Show file type, permissions, links, owner, group, size, time, and name |
 | `-h`   | Use readable sizes with `-l`                                           |
-| `-1`   | Print one entry per line                                               |
+| `-1`   | Print one entry per line (the default prints entries on one line)      |
 | `-t`   | Sort by modification time, newest first                                |
 | `-S`   | Sort by size, largest first                                            |
 | `-r`   | Reverse the selected ordering                                          |
 | `-R`   | Recursively list subdirectories                                        |
 
-Combined short options and `--` to end option parsing are also planned. See
+Short options can be combined (for example, `-al`), and `--` ends option parsing so
+dash-prefixed paths can be used as operands. See
 [`specs/PLAN.md`](specs/PLAN.md) for the detailed behavior
 and acceptance criteria.
 
