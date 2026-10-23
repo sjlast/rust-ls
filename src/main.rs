@@ -226,9 +226,7 @@ fn permission_bits(mode: u32) -> String {
 }
 
 fn human_size(size: u64) -> String {
-    const UNITS: [&str; 6] = [
-        "Byte", "Kilobyte", "Megabyte", "Gigabyte", "Terabyte", "Petabyte",
-    ];
+    const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
     let mut unit = 0usize;
     let mut divisor = 1u64;
     while size / divisor >= 1024 && unit < UNITS.len() - 1 {
@@ -241,9 +239,9 @@ fn human_size(size: u64) -> String {
         unit += 1;
     }
     if unit == UNITS.len() - 1 && rounded > 9999 {
-        return ">9999 Petabyte".to_owned();
+        return ">9999P".to_owned();
     }
-    format!("{rounded} {}", UNITS[unit])
+    format!("{rounded}{}", UNITS[unit])
 }
 
 fn subtract_calendar_months(value: NaiveDateTime, months: i32) -> NaiveDateTime {
@@ -550,16 +548,16 @@ mod tests {
 
     #[test]
     fn human_sizes_round_half_up_and_promote_after_rounding() {
-        assert_eq!(human_size(1), "1 Byte");
-        assert_eq!(human_size(1023), "1023 Byte");
-        assert_eq!(human_size(1024), "1 Kilobyte");
-        assert_eq!(human_size(1535), "1 Kilobyte");
-        assert_eq!(human_size(1536), "2 Kilobyte");
-        assert_eq!(human_size(1024 * 1024 - 513), "1023 Kilobyte");
-        assert_eq!(human_size(1024 * 1024 - 512), "1 Megabyte");
-        assert_eq!(human_size(1024 * 1024 - 511), "1 Megabyte");
-        assert_eq!(human_size(1024 * 1024 - 1), "1 Megabyte");
-        assert_eq!(human_size(u64::MAX), ">9999 Petabyte");
+        assert_eq!(human_size(1), "1B");
+        assert_eq!(human_size(1023), "1023B");
+        assert_eq!(human_size(1024), "1K");
+        assert_eq!(human_size(1535), "1K");
+        assert_eq!(human_size(1536), "2K");
+        assert_eq!(human_size(1024 * 1024 - 513), "1023K");
+        assert_eq!(human_size(1024 * 1024 - 512), "1M");
+        assert_eq!(human_size(1024 * 1024 - 511), "1M");
+        assert_eq!(human_size(1024 * 1024 - 1), "1M");
+        assert_eq!(human_size(u64::MAX), ">9999P");
     }
 
     #[test]

@@ -99,7 +99,7 @@ fn long_format_prints_metadata_one_entry_per_line_and_directory_total() {
     assert!(output.status.success());
     assert_eq!(lines.len(), 3);
     assert!(lines[0].starts_with("total "));
-    assert!(lines[1].contains(" 3 Byte "));
+    assert!(lines[1].contains(" 3B "));
     assert!(lines[1].ends_with(" a file"));
     assert!(lines[2].ends_with(" second"));
     assert!(lines[1].starts_with("-"));
