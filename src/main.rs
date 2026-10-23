@@ -227,21 +227,43 @@ fn permission_bits(mode: u32) -> String {
 
 fn human_size(size: u64) -> String {
     const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
-    let mut unit = 0usize;
+    let mut unit = 0;
     let mut divisor = 1u64;
-    while size / divisor >= 1024 && unit < UNITS.len() - 1 {
+    loop {
+        if unit == 0 {
+            if size < 1000 {
+                return format!("{size}B");
+            }
+            unit += 1;
+            divisor *= 1024;
+            continue;
+        }
+
+        let whole = size / divisor;
+        let remainder = size % divisor;
+        let fractional_tenths =
+            (u128::from(remainder) * 10 + u128::from(divisor / 2)) / u128::from(divisor);
+        let tenths = whole * 10 + fractional_tenths as u64;
+        let rounded = if tenths < 100 {
+            return format!("{}.{:01}{}", tenths / 10, tenths % 10, UNITS[unit]);
+        } else {
+            whole + u64::from(remainder >= divisor / 2)
+        };
+
+        if unit == UNITS.len() - 1 {
+            return if rounded > 9999 {
+                ">9999P".to_owned()
+            } else {
+                format!("{rounded}P")
+            };
+        }
+
+        if rounded < 1000 {
+            return format!("{rounded}{}", UNITS[unit]);
+        }
+        unit += 1;
         divisor *= 1024;
-        unit += 1;
     }
-    let mut rounded = size / divisor + u64::from(size % divisor >= divisor / 2 && unit > 0);
-    while rounded >= 1024 && unit < UNITS.len() - 1 {
-        rounded = (rounded + 512) / 1024;
-        unit += 1;
-    }
-    if unit == UNITS.len() - 1 && rounded > 9999 {
-        return ">9999P".to_owned();
-    }
-    format!("{rounded}{}", UNITS[unit])
 }
 
 fn subtract_calendar_months(value: NaiveDateTime, months: i32) -> NaiveDateTime {
@@ -548,15 +570,29 @@ mod tests {
 
     #[test]
     fn human_sizes_round_half_up_and_promote_after_rounding() {
+        assert_eq!(human_size(0), "0B");
         assert_eq!(human_size(1), "1B");
-        assert_eq!(human_size(1023), "1023B");
-        assert_eq!(human_size(1024), "1K");
-        assert_eq!(human_size(1535), "1K");
-        assert_eq!(human_size(1536), "2K");
-        assert_eq!(human_size(1024 * 1024 - 513), "1023K");
-        assert_eq!(human_size(1024 * 1024 - 512), "1M");
-        assert_eq!(human_size(1024 * 1024 - 511), "1M");
-        assert_eq!(human_size(1024 * 1024 - 1), "1M");
+        assert_eq!(human_size(999), "999B");
+        assert_eq!(human_size(1000), "1.0K");
+        assert_eq!(human_size(1023), "1.0K");
+        assert_eq!(human_size(1024), "1.0K");
+        assert_eq!(human_size(1075), "1.0K");
+        assert_eq!(human_size(1076), "1.1K");
+        assert_eq!(human_size(1535), "1.5K");
+        assert_eq!(human_size(1536), "1.5K");
+        assert_eq!(human_size(10188), "9.9K");
+        assert_eq!(human_size(10189), "10K");
+        assert_eq!(human_size(1024 * 1024 - 513), "1.0M");
+        assert_eq!(human_size(1024 * 1024 - 512), "1.0M");
+        assert_eq!(human_size(1024 * 1024 - 511), "1.0M");
+        assert_eq!(human_size(1024 * 1024 - 1), "1.0M");
+        assert_eq!(human_size(1023487), "999K");
+        assert_eq!(human_size(1023488), "1.0M");
+        assert_eq!(human_size(1024u64.pow(4)), "1.0T");
+        let peta = 1024u64.pow(5);
+        assert_eq!(human_size(1000 * peta), "1000P");
+        assert_eq!(human_size(9999 * peta), "9999P");
+        assert_eq!(human_size(9999 * peta + peta / 2), ">9999P");
         assert_eq!(human_size(u64::MAX), ">9999P");
     }
 
