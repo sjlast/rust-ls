@@ -7,4 +7,7 @@ description = "A macOS-oriented Rust implementation of ls"
 license = "MIT"
 
 [dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+libc = "0.2"
 thiserror = "2"
+users = "0.11"

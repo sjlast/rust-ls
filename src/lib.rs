@@ -89,6 +89,19 @@ pub struct ListingResult {
     pub entries: Vec<ListingEntry>,
     /// Errors encountered while processing operands or entries.
     pub errors: Vec<ListingError>,
+    /// Contiguous entry ranges, with directory groups marked for long-format totals.
+    pub groups: Vec<ListingGroup>,
+}
+
+/// A contiguous group of entries in a listing result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListingGroup {
+    /// Index of the first entry in this group.
+    pub start: usize,
+    /// Index immediately after the final entry in this group.
+    pub end: usize,
+    /// Whether this group came from enumerating a directory.
+    pub is_directory: bool,
 }
 
 /// List entries for parsed options and operands.
@@ -146,6 +159,14 @@ pub fn list(options: &ListingOptions, operands: &[PathBuf]) -> ListingResult {
 
     file_entries.sort_by(|left, right| left.name.cmp(&right.name));
     result.entries = file_entries;
+    if !result.entries.is_empty() {
+        let end = result.entries.len();
+        result.groups.push(ListingGroup {
+            start: 0,
+            end,
+            is_directory: false,
+        });
+    }
 
     for directory in directory_operands {
         list_directory(directory, options, &mut result);
@@ -214,7 +235,14 @@ fn list_directory(directory: &Path, options: &ListingOptions, result: &mut Listi
     }
 
     directory_entries.sort_by(|left, right| left.name.cmp(&right.name));
+    let start = result.entries.len();
     result.entries.extend(directory_entries);
+    let end = result.entries.len();
+    result.groups.push(ListingGroup {
+        start,
+        end,
+        is_directory: true,
+    });
 }
 
 fn should_include(name: &OsStr, options: &ListingOptions) -> bool {
@@ -302,6 +330,7 @@ mod tests {
         let result = ListingResult {
             entries: vec![entry],
             errors: vec![error],
+            groups: Vec::new(),
         };
 
         assert_eq!(result.entries.len(), 1);

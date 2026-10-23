@@ -86,3 +86,44 @@ fn unsupported_option_fails_with_diagnostic_without_listing() {
     assert!(output.stdout.is_empty());
     assert_eq!(output.stderr, b"rust-ls: unsupported option '-z'\n");
 }
+
+#[test]
+fn long_format_prints_metadata_one_entry_per_line_and_directory_total() {
+    let directory = TestDirectory::new();
+    fs::write(directory.path().join("a file"), "abc").expect("file can be created");
+    fs::write(directory.path().join("second"), "").expect("file can be created");
+
+    let output = run(directory.path(), &[OsStr::new("-lh")]);
+    let stdout = String::from_utf8(output.stdout).expect("output is UTF-8");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert!(output.status.success());
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].starts_with("total "));
+    assert!(lines[1].contains(" 3 Byte "));
+    assert!(lines[1].ends_with(" a file"));
+    assert!(lines[2].ends_with(" second"));
+    assert!(lines[1].starts_with("-"));
+}
+
+#[cfg(unix)]
+#[test]
+fn long_format_shows_symlink_size_and_escaped_target() {
+    use std::os::unix::fs::symlink;
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.path().join("target with space"),
+        "a much longer target",
+    )
+    .expect("file can be created");
+    symlink("target with space", directory.path().join("link name")).expect("link can be created");
+
+    let output = run(
+        directory.path(),
+        &[OsStr::new("-l"), OsStr::new("link name")],
+    );
+    let stdout = String::from_utf8(output.stdout).expect("output is UTF-8");
+    assert!(output.status.success());
+    assert!(stdout.starts_with("l"));
+    assert!(stdout.contains(" 17 "));
+    assert!(stdout.ends_with("link name -> target with space\n"));
+}
