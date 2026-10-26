@@ -1,5 +1,7 @@
 use std::ffi::OsStr;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -96,13 +98,52 @@ fn long_format_prints_metadata_one_entry_per_line_and_directory_total() {
     let output = run(directory.path(), &[OsStr::new("-lh")]);
     let stdout = String::from_utf8(output.stdout).expect("output is UTF-8");
     let lines = stdout.lines().collect::<Vec<_>>();
+    let expected_blocks = ["a file", "second"]
+        .iter()
+        .map(|name| {
+            fs::symlink_metadata(directory.path().join(name))
+                .expect("metadata exists")
+                .blocks()
+        })
+        .sum::<u64>();
     assert!(output.status.success());
     assert_eq!(lines.len(), 3);
-    assert!(lines[0].starts_with("total "));
+    assert_eq!(lines[0], format!("total {expected_blocks}"));
     assert!(lines[1].contains(" 3B "));
     assert!(lines[1].ends_with(" a file"));
     assert!(lines[2].ends_with(" second"));
     assert!(lines[1].starts_with("-"));
+}
+
+#[cfg(unix)]
+#[test]
+fn all_long_format_total_includes_synthesized_dot_entries_and_hidden_files() {
+    let directory = TestDirectory::new();
+    fs::write(directory.path().join("visible"), "data").expect("file can be created");
+    fs::write(directory.path().join(".hidden"), "data").expect("hidden file can be created");
+
+    let output = run(directory.path(), &[OsStr::new("-la")]);
+    let stdout = String::from_utf8(output.stdout).expect("output is UTF-8");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    let expected_blocks = [
+        directory.path().to_path_buf(),
+        directory.path().join(".."),
+        directory.path().join("visible"),
+        directory.path().join(".hidden"),
+    ]
+    .iter()
+    .map(|path| {
+        fs::symlink_metadata(path)
+            .expect("selected metadata exists")
+            .blocks()
+    })
+    .sum::<u64>();
+
+    assert!(output.status.success());
+    assert_eq!(lines[0], format!("total {expected_blocks}"));
+    assert!(lines.iter().any(|line| line.ends_with(" .")));
+    assert!(lines.iter().any(|line| line.ends_with(" ..")));
+    assert!(lines.iter().any(|line| line.ends_with(" .hidden")));
 }
 
 #[cfg(unix)]

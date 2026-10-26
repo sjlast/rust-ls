@@ -22,11 +22,15 @@ fn main() -> ExitCode {
     let result = list(&options, &operands);
     let render_errors = render_result(&result, &options);
 
-    if result.errors.is_empty() && render_errors.is_empty() {
+    if command_succeeded(&result, &render_errors) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
     }
+}
+
+fn command_succeeded(result: &ListingResult, render_errors: &[String]) -> bool {
+    result.errors.is_empty() && render_errors.is_empty()
 }
 
 fn parse_arguments(
@@ -102,12 +106,15 @@ fn render_result(result: &ListingResult, options: &ListingOptions) -> Vec<String
             println!("total {blocks}");
         }
         if options.long {
-            for entry in entries {
-                let (line, entry_errors) =
-                    render_long_entry(entry, options.human_readable, &cache, now);
-                println!("{line}");
-                errors.extend(entry_errors);
-            }
+            errors.extend(render_long_entries_with(
+                entries,
+                options.human_readable,
+                &cache,
+                now,
+                &|path| attribute_marker(path),
+                &|path| std::fs::read_link(path),
+                |line| println!("{line}"),
+            ));
         } else if options.one_per_line {
             for entry in entries {
                 println!("{}", escape_name(entry.name.as_os_str()));
@@ -129,16 +136,52 @@ fn render_result(result: &ListingResult, options: &ListingOptions) -> Vec<String
     errors
 }
 
-fn render_long_entry(
+fn render_long_entries_with<A, L, O>(
+    entries: &[rust_ls::ListingEntry],
+    human_readable: bool,
+    cache: &UsersCache,
+    now: DateTime<Local>,
+    inspect_attributes: &A,
+    read_link: &L,
+    mut output_line: O,
+) -> Vec<String>
+where
+    A: Fn(&Path) -> std::io::Result<Option<char>>,
+    L: Fn(&Path) -> std::io::Result<PathBuf>,
+    O: FnMut(&str),
+{
+    let mut errors = Vec::new();
+    for entry in entries {
+        let (line, entry_errors) = render_long_entry_with(
+            entry,
+            human_readable,
+            cache,
+            now,
+            |path| inspect_attributes(path),
+            |path| read_link(path),
+        );
+        output_line(&line);
+        errors.extend(entry_errors);
+    }
+    errors
+}
+
+fn render_long_entry_with<A, L>(
     entry: &rust_ls::ListingEntry,
     human_readable: bool,
     cache: &UsersCache,
     now: DateTime<Local>,
-) -> (String, Vec<String>) {
+    inspect_attributes: A,
+    read_link: L,
+) -> (String, Vec<String>)
+where
+    A: Fn(&Path) -> std::io::Result<Option<char>>,
+    L: Fn(&Path) -> std::io::Result<PathBuf>,
+{
     let metadata = &entry.metadata;
     let mode = metadata.mode();
     let mut errors = Vec::new();
-    let marker = match attribute_marker(&entry.path) {
+    let marker = match inspect_attributes(&entry.path) {
         Ok(marker) => marker,
         Err(error) => {
             errors.push(format!("{}: {error}", entry.path.display()));
@@ -149,32 +192,26 @@ fn render_long_entry(
     if let Some(marker) = marker {
         permissions.push(marker);
     }
-    let owner = cache
-        .get_user_by_uid(metadata.uid())
-        .map(|user| user.name().to_string_lossy().into_owned())
-        .unwrap_or_else(|| metadata.uid().to_string());
-    let group = cache
-        .get_group_by_gid(metadata.gid())
-        .map(|group| group.name().to_string_lossy().into_owned())
-        .unwrap_or_else(|| metadata.gid().to_string());
-    let file_kind = mode & libc::S_IFMT as u32;
-    let size = if file_kind == libc::S_IFCHR as u32 || file_kind == libc::S_IFBLK as u32 {
-        let (major, minor) = mac_device_numbers(metadata.rdev());
-        format!("{major}, {minor}")
-    } else if human_readable {
-        human_size(metadata.len())
-    } else {
-        metadata.len().to_string()
-    };
+    let owner = account_name(metadata.uid(), |uid| {
+        cache
+            .get_user_by_uid(uid)
+            .map(|user| user.name().to_string_lossy().into_owned())
+    });
+    let group = account_name(metadata.gid(), |gid| {
+        cache
+            .get_group_by_gid(gid)
+            .map(|group| group.name().to_string_lossy().into_owned())
+    });
+    let size = format_entry_size(mode, metadata.rdev(), metadata.len(), human_readable);
     let modified = metadata
         .modified()
         .ok()
         .map(DateTime::<Local>::from)
-        .map(|date| format_timestamp(date.naive_local(), now.naive_local()))
-        .unwrap_or_else(|| "??? ?? ??:??".to_owned());
+        .map(|date| date.naive_local());
+    let modified = format_optional_timestamp(modified, now.naive_local(), locale_day_first());
     let mut name = escape_name(entry.name.as_os_str());
     if metadata.file_type().is_symlink() {
-        match std::fs::read_link(&entry.path) {
+        match read_link(&entry.path) {
             Ok(target) => {
                 write!(name, " -> {}", escape_name(target.as_os_str()))
                     .expect("writing to String cannot fail");
@@ -189,6 +226,22 @@ fn render_long_entry(
         ),
         errors,
     )
+}
+
+fn account_name(id: u32, lookup: impl FnOnce(u32) -> Option<String>) -> String {
+    lookup(id).unwrap_or_else(|| id.to_string())
+}
+
+fn format_entry_size(mode: u32, rdev: u64, bytes: u64, human_readable: bool) -> String {
+    let kind = mode & libc::S_IFMT as u32;
+    if kind == libc::S_IFCHR as u32 || kind == libc::S_IFBLK as u32 {
+        let (major, minor) = mac_device_numbers(rdev);
+        format!("{major}, {minor}")
+    } else if human_readable {
+        human_size(bytes)
+    } else {
+        bytes.to_string()
+    }
 }
 
 fn file_type(mode: u32) -> char {
@@ -294,10 +347,23 @@ fn days_in_month(year: i32, month: u32) -> u32 {
         .day()
 }
 
-fn format_timestamp(value: NaiveDateTime, now: NaiveDateTime) -> String {
+fn format_optional_timestamp(
+    value: Option<NaiveDateTime>,
+    now: NaiveDateTime,
+    day_first: bool,
+) -> String {
+    value
+        .map(|value| format_timestamp_with_order(value, now, day_first))
+        .unwrap_or_else(|| "??? ?? ??:??".to_owned())
+}
+
+fn format_timestamp_with_order(
+    value: NaiveDateTime,
+    now: NaiveDateTime,
+    day_first: bool,
+) -> String {
     let before = subtract_calendar_months(now, 6);
     let after = subtract_calendar_months(now, -6);
-    let day_first = locale_day_first();
     let format = if value < before || value > after {
         if day_first { "%e %b %Y" } else { "%b %e %Y" }
     } else {
@@ -307,15 +373,7 @@ fn format_timestamp(value: NaiveDateTime, now: NaiveDateTime) -> String {
             "%b %e %H:%M"
         }
     };
-    locale_format(value, format).unwrap_or_else(|| {
-        value
-            .format(if format.ends_with("%Y") {
-                "%b %e %Y"
-            } else {
-                "%b %e %H:%M"
-            })
-            .to_string()
-    })
+    locale_format(value, format).unwrap_or_else(|| value.format(format).to_string())
 }
 
 fn locale_day_first() -> bool {
@@ -394,6 +452,16 @@ fn mac_device_numbers(device: u64) -> (u64, u64) {
     (((device >> 24) & 0xff), (device & 0x00ff_ffff))
 }
 
+fn resolve_attribute_marker(
+    xattrs_present: std::io::Result<bool>,
+    acl_check: impl FnOnce() -> std::io::Result<bool>,
+) -> std::io::Result<Option<char>> {
+    if xattrs_present? {
+        return Ok(Some('@'));
+    }
+    Ok(acl_check()?.then_some('+'))
+}
+
 #[cfg(target_os = "macos")]
 fn attribute_marker(path: &Path) -> std::io::Result<Option<char>> {
     use std::ffi::CString;
@@ -402,18 +470,24 @@ fn attribute_marker(path: &Path) -> std::io::Result<Option<char>> {
         .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
     let attrs_len =
         unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0, libc::XATTR_NOFOLLOW) };
-    if attrs_len < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if attrs_len > 0 {
-        return Ok(Some('@'));
-    }
+    let xattrs_present = if attrs_len < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(attrs_len > 0)
+    };
+    resolve_attribute_marker(xattrs_present, || extended_acl_present(&path))
+}
+
+#[cfg(target_os = "macos")]
+fn extended_acl_present(path: &std::ffi::CStr) -> std::io::Result<bool> {
     let acl = unsafe { acl_get_file(path.as_ptr(), 0x00000100) };
     if acl.is_null() {
         let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ENOENT) || error.raw_os_error() == Some(libc::ENOTSUP)
-        {
-            return Ok(None);
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOENT) | Some(libc::ENOTSUP) | Some(libc::ENOATTR)
+        ) {
+            return Ok(false);
         }
         return Err(error);
     }
@@ -425,7 +499,7 @@ fn attribute_marker(path: &Path) -> std::io::Result<Option<char>> {
     if entry_status < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok((entry_status == 1).then_some('+'))
+    Ok(entry_status == 0)
 }
 
 #[cfg(target_os = "macos")]
@@ -494,11 +568,47 @@ fn append_escaped_text(output: &mut String, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        escape_name, file_type, format_timestamp, human_size, parse_arguments, permission_bits,
+        account_name, command_succeeded, escape_name, file_type, format_entry_size,
+        format_optional_timestamp, format_timestamp_with_order, human_size, mac_device_numbers,
+        parse_arguments, permission_bits, render_long_entries_with, render_long_entry_with,
+        resolve_attribute_marker,
     };
-    use rust_ls::{ListingOptions, SortOrder};
+    use rust_ls::{ListingOptions, ListingResult, SortOrder};
     use std::ffi::OsString;
+    use std::fs;
+    use std::io;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(target_os = "macos")]
+    use super::{attribute_marker, extended_acl_present};
+
+    struct TestDirectory(PathBuf);
+
+    static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            loop {
+                let id = NEXT_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir()
+                    .join(format!("rust-ls-render-{}-{id}", std::process::id()));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("test directory can be created: {error}"),
+                }
+            }
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn parses_combined_short_options_and_operands() {
@@ -597,6 +707,66 @@ mod tests {
     }
 
     #[test]
+    fn device_numbers_use_macos_dev_t_fields_and_skip_human_size_formatting() {
+        let encoded = (12_u64 << 24) | 34;
+        assert_eq!(mac_device_numbers(encoded), (12, 34));
+        let char_size = format_entry_size(libc::S_IFCHR as u32, encoded, 1024, true);
+        let block_size = format_entry_size(libc::S_IFBLK as u32, encoded, 1024, true);
+        let regular_size = format_entry_size(libc::S_IFREG as u32, encoded, 1024, true);
+        assert_eq!(char_size, "12, 34");
+        assert_eq!(block_size, "12, 34");
+        assert_eq!(regular_size, "1.0K");
+    }
+
+    #[test]
+    fn account_name_falls_back_to_numeric_id_when_lookup_misses() {
+        assert_eq!(account_name(42, |_| None), "42");
+        assert_eq!(account_name(42, |_| Some("account".to_owned())), "account");
+    }
+
+    #[test]
+    fn render_errors_make_the_command_unsuccessful() {
+        let result = ListingResult::default();
+        assert!(command_succeeded(&result, &[]));
+        assert!(!command_succeeded(
+            &result,
+            &["entry: readlink failed".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn attribute_markers_prefer_extended_attributes_and_propagate_inspection_errors() {
+        let acl_checked = std::cell::Cell::new(false);
+        let marker = resolve_attribute_marker(Ok(true), || {
+            acl_checked.set(true);
+            Ok(true)
+        })
+        .expect("marker lookup succeeds");
+        assert_eq!(marker, Some('@'));
+        assert!(!acl_checked.get());
+
+        assert_eq!(
+            resolve_attribute_marker(Ok(false), || Ok(true)).expect("ACL lookup succeeds"),
+            Some('+')
+        );
+        assert_eq!(
+            resolve_attribute_marker(Ok(false), || Ok(false)).expect("ACL lookup succeeds"),
+            None
+        );
+        let error = resolve_attribute_marker(
+            Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            || Ok(false),
+        )
+        .expect_err("inspection failure is reported");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        let error = resolve_attribute_marker(Ok(false), || {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .expect_err("ACL inspection failure is reported");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
     fn six_calendar_month_cutoffs_use_time_at_the_boundary() {
         use chrono::{NaiveDate, NaiveTime};
         let now = NaiveDate::from_ymd_opt(2024, 8, 31)
@@ -605,16 +775,184 @@ mod tests {
         let exact = NaiveDate::from_ymd_opt(2024, 2, 29)
             .expect("date is valid")
             .and_time(NaiveTime::from_hms_opt(12, 0, 0).expect("time is valid"));
-        assert!(format_timestamp(exact, now).ends_with("12:00"));
+        assert!(format_timestamp_with_order(exact, now, false).ends_with("12:00"));
         let outside = exact - chrono::Duration::nanoseconds(1);
-        assert!(format_timestamp(outside, now).ends_with("2024"));
+        assert!(format_timestamp_with_order(outside, now, false).ends_with("2024"));
         let future_exact = NaiveDate::from_ymd_opt(2025, 2, 28)
             .expect("date is valid")
             .and_time(NaiveTime::from_hms_opt(12, 0, 0).expect("time is valid"));
-        assert!(format_timestamp(future_exact, now).ends_with("12:00"));
+        assert!(format_timestamp_with_order(future_exact, now, false).ends_with("12:00"));
         assert!(
-            format_timestamp(future_exact + chrono::Duration::nanoseconds(1), now)
-                .ends_with("2025")
+            format_timestamp_with_order(
+                future_exact + chrono::Duration::nanoseconds(1),
+                now,
+                false,
+            )
+            .ends_with("2025")
+        );
+        assert!(
+            format_timestamp_with_order(exact + chrono::Duration::seconds(1), now, false)
+                .ends_with("12:00")
+        );
+        assert!(
+            format_timestamp_with_order(future_exact - chrono::Duration::seconds(1), now, false,)
+                .ends_with("11:59")
+        );
+        assert_eq!(format_optional_timestamp(None, now, false), "??? ?? ??:??");
+        let month_first = format_timestamp_with_order(exact, now, false);
+        let day_first = format_timestamp_with_order(exact, now, true);
+        assert!(!month_first.starts_with("29 "));
+        assert!(month_first.contains("29"));
+        assert!(day_first.starts_with("29 "));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn renderer_preserves_field_order_and_reports_attribute_and_link_errors() {
+        use std::os::unix::fs::symlink;
+        use std::time::SystemTime;
+
+        let directory = TestDirectory::new();
+        let target = directory.0.join("target");
+        fs::write(&target, "longer target contents").expect("target file can be created");
+        let path = directory.0.join("link");
+        symlink(&target, &path).expect("symlink can be created");
+        let metadata = fs::symlink_metadata(&path).expect("symlink metadata is available");
+        let symlink_nlink = metadata.nlink();
+        let symlink_size = metadata.len();
+        let entry = rust_ls::ListingEntry {
+            path: path.clone(),
+            name: OsString::from("link"),
+            metadata,
+        };
+        let regular_path = directory.0.join("later-entry");
+        fs::write(&regular_path, "later").expect("regular file can be created");
+        let regular_entry = rust_ls::ListingEntry {
+            path: regular_path.clone(),
+            name: OsString::from("later-entry"),
+            metadata: fs::symlink_metadata(&regular_path)
+                .expect("regular file metadata is available"),
+        };
+        let cache = users::UsersCache::new();
+        let fixed_now = chrono::DateTime::<chrono::Local>::from(SystemTime::now());
+        let entries = [entry, regular_entry];
+        let mut rendered_lines = Vec::new();
+        let errors = render_long_entries_with(
+            &entries,
+            false,
+            &cache,
+            fixed_now,
+            &|_| Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            &|_| Err(io::Error::from(io::ErrorKind::NotFound)),
+            |line| rendered_lines.push(line.to_owned()),
+        );
+
+        let fields = rendered_lines[0].split_whitespace().collect::<Vec<_>>();
+        assert_eq!(fields[0].chars().next(), Some('l'));
+        assert_eq!(fields[1], symlink_nlink.to_string());
+        assert!(!fields[2].is_empty());
+        assert!(!fields[3].is_empty());
+        assert_eq!(fields[4], symlink_size.to_string());
+        assert_eq!(fields.len(), 9);
+        assert_eq!(fields[8], "link");
+        assert!(fields[7].contains(':'));
+        assert!(rendered_lines[0].ends_with(" link"));
+        assert!(rendered_lines[1].ends_with(" later-entry"));
+        assert_eq!(errors.len(), 3);
+        assert!(errors.iter().all(|error| {
+            error.starts_with(&path.display().to_string())
+                || error.starts_with(&regular_path.display().to_string())
+        }));
+
+        for marker in ['@', '+'] {
+            let (marked_line, errors) = render_long_entry_with(
+                &entries[1],
+                false,
+                &cache,
+                fixed_now,
+                |_| Ok(Some(marker)),
+                |_| unreachable!("regular files do not read link targets"),
+            );
+            let expected_permission_field = format!(
+                "{}{}{}",
+                file_type(entries[1].metadata.mode()),
+                permission_bits(entries[1].metadata.mode()),
+                marker
+            );
+            assert_eq!(
+                marked_line.split_whitespace().next(),
+                Some(expected_permission_field.as_str())
+            );
+            assert!(errors.is_empty());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_metadata_markers_detect_xattrs_acl_and_xattr_precedence() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = TestDirectory::new();
+        let path = directory.0.join("metadata");
+        fs::write(&path, "data").expect("file can be created");
+        let c_path = CString::new(path.as_os_str().as_bytes()).expect("path has no NUL bytes");
+        let xattr_name = c"com.example.rust-ls-test";
+        let value = [1_u8];
+        let set_result = unsafe {
+            libc::setxattr(
+                c_path.as_ptr(),
+                xattr_name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(
+            set_result,
+            0,
+            "xattr can be created: {}",
+            io::Error::last_os_error()
+        );
+        assert_eq!(
+            attribute_marker(&path).expect("xattr inspection succeeds"),
+            Some('@')
+        );
+
+        let acl_result = std::process::Command::new("/bin/chmod")
+            .arg("+a")
+            .arg("everyone allow read")
+            .arg(&path)
+            .status()
+            .expect("chmod can apply an ACL");
+        assert!(acl_result.success(), "macOS accepts the test ACL");
+        assert_eq!(
+            attribute_marker(&path).expect("metadata inspection succeeds"),
+            Some('@')
+        );
+
+        let no_xattr_path = directory.0.join("acl-only");
+        fs::write(&no_xattr_path, "data").expect("ACL test file can be created");
+        let acl_result = std::process::Command::new("/bin/chmod")
+            .arg("+a")
+            .arg("everyone allow read")
+            .arg(&no_xattr_path)
+            .status()
+            .expect("chmod can apply an ACL");
+        assert!(acl_result.success(), "macOS accepts the test ACL");
+        let acl_path =
+            CString::new(no_xattr_path.as_os_str().as_bytes()).expect("path has no NUL bytes");
+        let acl_present = extended_acl_present(&acl_path).expect("ACL entry can be inspected");
+        assert!(acl_present);
+        assert_eq!(
+            attribute_marker(&no_xattr_path).expect("ACL marker inspection succeeds"),
+            Some('@')
+        );
+        assert_eq!(
+            resolve_attribute_marker(Ok(false), || Ok(acl_present))
+                .expect("ACL marker resolution succeeds"),
+            Some('+')
         );
     }
 }
