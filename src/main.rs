@@ -151,8 +151,9 @@ where
     O: FnMut(&str),
 {
     let mut errors = Vec::new();
+    let mut rows = Vec::with_capacity(entries.len());
     for entry in entries {
-        let (line, entry_errors) = render_long_entry_with(
+        let (row, entry_errors) = render_long_entry_fields_with(
             entry,
             human_readable,
             cache,
@@ -160,12 +161,17 @@ where
             |path| inspect_attributes(path),
             |path| read_link(path),
         );
-        output_line(&line);
+        rows.push(row);
         errors.extend(entry_errors);
+    }
+    let lines = format_long_entry_group(&rows);
+    for line in &lines {
+        output_line(line);
     }
     errors
 }
 
+#[cfg(test)]
 fn render_long_entry_with<A, L>(
     entry: &rust_ls::ListingEntry,
     human_readable: bool,
@@ -174,6 +180,39 @@ fn render_long_entry_with<A, L>(
     inspect_attributes: A,
     read_link: L,
 ) -> (String, Vec<String>)
+where
+    A: Fn(&Path) -> std::io::Result<Option<char>>,
+    L: Fn(&Path) -> std::io::Result<PathBuf>,
+{
+    let (row, errors) = render_long_entry_fields_with(
+        entry,
+        human_readable,
+        cache,
+        now,
+        inspect_attributes,
+        read_link,
+    );
+    (format_long_entry_group(&[row]).remove(0), errors)
+}
+
+struct LongEntryFields {
+    permissions: String,
+    links: String,
+    owner: String,
+    group: String,
+    size: String,
+    modified: String,
+    name: String,
+}
+
+fn render_long_entry_fields_with<A, L>(
+    entry: &rust_ls::ListingEntry,
+    human_readable: bool,
+    cache: &UsersCache,
+    now: DateTime<Local>,
+    inspect_attributes: A,
+    read_link: L,
+) -> (LongEntryFields, Vec<String>)
 where
     A: Fn(&Path) -> std::io::Result<Option<char>>,
     L: Fn(&Path) -> std::io::Result<PathBuf>,
@@ -220,12 +259,33 @@ where
         }
     }
     (
-        format!(
-            "{permissions} {} {owner} {group} {size} {modified} {name}",
-            metadata.nlink()
-        ),
+        LongEntryFields {
+            permissions,
+            links: metadata.nlink().to_string(),
+            owner,
+            group,
+            size,
+            modified,
+            name,
+        },
         errors,
     )
+}
+
+fn format_long_entry_group(rows: &[LongEntryFields]) -> Vec<String> {
+    let link_width = rows.iter().map(|row| row.links.len()).max().unwrap_or(1);
+    let owner_width = rows.iter().map(|row| row.owner.len()).max().unwrap_or(1);
+    let group_width = rows.iter().map(|row| row.group.len()).max().unwrap_or(1);
+    let size_width = rows.iter().map(|row| row.size.len()).max().unwrap_or(1);
+
+    rows.iter()
+        .map(|row| {
+            format!(
+                "{} {:>link_width$} {:<owner_width$}  {:<group_width$}   {:>size_width$} {} {}",
+                row.permissions, row.links, row.owner, row.group, row.size, row.modified, row.name,
+            )
+        })
+        .collect()
 }
 
 fn account_name(id: u32, lookup: impl FnOnce(u32) -> Option<String>) -> String {
