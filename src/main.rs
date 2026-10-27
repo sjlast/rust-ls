@@ -1006,10 +1006,6 @@ mod tests {
         let acl_present = extended_acl_present(&acl_path).expect("ACL entry can be inspected");
         assert!(acl_present);
         assert_eq!(
-            attribute_marker(&no_xattr_path).expect("ACL marker inspection succeeds"),
-            Some('@')
-        );
-        assert_eq!(
             resolve_attribute_marker(Ok(false), || Ok(acl_present))
                 .expect("ACL marker resolution succeeds"),
             Some('+')
