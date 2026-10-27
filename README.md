@@ -3,9 +3,9 @@
 A macOS-oriented Rust implementation of `ls`. The project is being built as a learning
 project and aims to support common macOS directory-listing workflows.
 
-> **Status:** Early development. The command supports basic directory enumeration and short
-> option parsing; metadata formatting, alternate sorting, and recursive traversal are still
-> being implemented.
+> **Status:** Early development. The command supports basic directory enumeration, short option
+> parsing, long-format metadata, and readable sizes. Alternate sorting and recursive traversal
+> are still being implemented.
 
 ## Build and run
 
